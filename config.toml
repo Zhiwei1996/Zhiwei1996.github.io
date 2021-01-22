@@ -1,0 +1,37 @@
+baseURL = "https://zhiwei1996.github.io/"
+languageCode = "en-us"
+title = "Wang Zhiwei"
+theme="archie"
+copyright = "© Wang Zhiwei"
+pygmentsstyle = "monokai"
+pygmentscodefences = true
+pygmentscodefencesguesssyntax = true
+[params]
+	mode="light"
+	useCDN=false
+	subtitle = "Life is wonderful"
+
+[[params.social]]
+name = "GitHub"
+icon = "github"
+url = "https://github.com/Zhiwei1996"
+
+[[menu.main]]
+name = "Home"
+url = "/"
+weight = 1
+
+[[menu.main]]
+name = "All posts"
+url = "/posts"
+weight = 2
+
+[[menu.main]]
+name = "About"
+url = "/about"
+weight = 3
+
+[[menu.main]]
+name = "Tags"
+url = "/tags"
+weight = 4
