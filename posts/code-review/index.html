@@ -1,0 +1,235 @@
+<!doctype html><html><head><meta charset=utf-8><meta http-equiv=x-ua-compatible content="IE=edge"><title>一次改善既有代码的设计 - Wang Zhiwei</title><meta name=viewport content="width=device-width,initial-scale=1"><meta property="og:image" content><meta property="og:title" content="一次改善既有代码的设计"><meta property="og:description" content="通过 Dataclass 尝试对数据清洗中复杂数据的处理逻辑进行优化"><meta property="og:type" content="article"><meta property="og:url" content="https://zhiweio.github.io/posts/code-review/"><meta property="article:section" content="posts"><meta property="article:published_time" content="2020-07-18T00:00:00+00:00"><meta property="article:modified_time" content="2020-07-18T00:00:00+00:00"><meta name=twitter:card content="summary"><meta name=twitter:title content="一次改善既有代码的设计"><meta name=twitter:description content="通过 Dataclass 尝试对数据清洗中复杂数据的处理逻辑进行优化"><script src=https://zhiweio.github.io/js/feather.min.js></script><link href=https://zhiweio.github.io/css/fonts.css rel=stylesheet><link rel=stylesheet type=text/css media=screen href=https://zhiweio.github.io/css/main.css></head><body><div class=content><header><div class=main><a href=https://zhiweio.github.io/>Wang Zhiwei</a></div><nav><a href=/>Home</a>
+<a href=/posts>All posts</a>
+<a href=/about>About</a>
+<a href=/tags>Tags</a></nav></header><main><article><div class=title><h1 class=title>一次改善既有代码的设计</h1><div class=meta>Posted on Jul 18, 2020</div></div><section class=body><h2 id=前言>前言</h2><p>作为一名数据清洗程序员，平时的主要工作是搬运和规范化数据，在 ETL 中处于 T(Transform) 和 L(Load) 的阶段。在我们的线上业务数据实时更新流程里，对于每张 <code>MySQL</code> 表都要事先对比新旧数据，只提交更新变化的字段，即所谓真实更新，然而因为祖传代码和同事之间开发规范不统一，对于真实更新的处理存在多份不同的实现，导致了大量重复代码和难以维护的问题，我决定封装这一业务逻辑，将其统一和规范化，解决以上暴露出的问题。</p><h2 id=正文>正文</h2><h3 id=设计思考>设计思考</h3><p>封装这一业务，需要考虑兼容性和可扩展性，其一要能够兼容所有数据维度（每个维度对应一张表），其二便于用户扩展添加模块的功能，以应对特殊业务处理逻辑需求的场景。以上两点是整个设计过程中必须记住的，否则又会是多了一份重复代码，使原有的问题更严重。</p><p>观察业务，处理的数据为 <code>JSON</code> 格式，映射到 <code>Python</code> 里就是一个字典结构，每次更新时都会拿到多条这样的新数据，再与数据库里的旧数据对比去重，并找出每条数据变化了的字段，最后请求 <code>API</code> 接口更新。原有的实现大同小异，都是直接处理 <code>Python</code> 字典数据，去重逻辑为遍历循环作对比，并且衍生了很多不够通用的辅助功能函数，晦涩难懂，不好测试，简直维护地狱。</p><p>有个概念叫 <code>数据类</code>， 每一种数据可以封装成一个类，便于对数据做复杂的逻辑处理，此次代码优化也是以此概念为基础，把处理 <code>Python</code> 字典转换成处理数据类，如此一来可以简化工作，这里推荐两篇文章</p><ul><li><a href=https://typeclasses.com/python/data-classes>Data classes</a> - Type Classes</li><li><a href=https://www.zlovezl.cn/articles/a-good-player-know-the-rules/>Python 工匠：做一个精通规则的玩家</a></li></ul><p>在 <code>3.7</code> 之后的 <code>Python</code> 版本中，有个名为 <code>dataclasses</code> 的模块，它就是数据类在 <code>Python</code> 里的通用模块实现，非常便于处理数据。最开始是 <code>Python3.6</code> 时候的一个第三方库，因为太好用且使用广泛，在 <code>3.7</code> 之后被加入进了标准库里。以下官方文档和原项目的 <code>GitHub</code> 链接，感兴趣可以看下。</p><ul><li>原项目地址: <a href=https://github.com/ericvsmith/dataclasses>https://github.com/ericvsmith/dataclasses</a></li><li>官方文档: <a href=https://docs.python.org/3/library/dataclasses.html>https://docs.python.org/3/library/dataclasses.html</a></li><li><a href=https://www.python.org/dev/peps/pep-0557/>PEP 557 &ndash; Data Classes</a></li></ul><p>PS: 我曾试图把该模块移植到 <code>Python2</code>，不过失败了 :(</p><p><a href=https://github.com/Zhiwei1996/dataclasses>失败的实现</a></p><h3 id=实现>实现</h3><p>因为数据更新都是走接口，所以这里和直接连接数据库更新有所不同，最后更新的数据要构造成接口规范的格式，下面代码里可能会有些具体业务上的细节，这些都是细枝末节，可以忽略，了解大致思路即可。</p><h4 id=数据类>数据类</h4><p>首先开始实现一个数据类雏形</p><div class=highlight><pre style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code class=language-python data-lang=python><span style=color:#66d9ef>class</span> <span style=color:#a6e22e>DataNode</span>(object):
+    <span style=color:#66d9ef>def</span> __init__(self, data, uniq_keys, eid<span style=color:#f92672>=</span>None, primary_key<span style=color:#f92672>=</span>None):
+        self<span style=color:#f92672>.</span>data <span style=color:#f92672>=</span> copy<span style=color:#f92672>.</span>deepcopy(data)
+        <span style=color:#75715e># 这里因为业务上需要所以必须有 eid，忽略即可</span>
+        <span style=color:#75715e># `eid` required</span>
+        <span style=color:#66d9ef>if</span> <span style=color:#f92672>not</span> self<span style=color:#f92672>.</span>data<span style=color:#f92672>.</span>get(<span style=color:#e6db74>&#39;eid&#39;</span>) <span style=color:#f92672>and</span> isinstance(eid, basestring) <span style=color:#f92672>and</span> len(eid) <span style=color:#f92672>==</span> <span style=color:#ae81ff>36</span>:
+            self<span style=color:#f92672>.</span>assign(self<span style=color:#f92672>.</span>data, eid<span style=color:#f92672>=</span>eid)
+        <span style=color:#66d9ef>elif</span> self<span style=color:#f92672>.</span>data<span style=color:#f92672>.</span>get(<span style=color:#e6db74>&#39;eid&#39;</span>):
+            <span style=color:#66d9ef>pass</span>
+        <span style=color:#66d9ef>else</span>:
+            <span style=color:#66d9ef>raise</span> DataNodeError(
+                <span style=color:#e6db74>&#39;construct DataNode failed due to without eid or invaild eid&#39;</span>)
+        self<span style=color:#f92672>.</span>uniq_keys <span style=color:#f92672>=</span> uniq_keys
+        self<span style=color:#f92672>.</span>pk <span style=color:#f92672>=</span> primary_key
+        self<span style=color:#f92672>.</span>__unique <span style=color:#f92672>=</span> tuple([self<span style=color:#f92672>.</span>data[k] <span style=color:#66d9ef>for</span> k <span style=color:#f92672>in</span> self<span style=color:#f92672>.</span>uniq_keys])
+
+    <span style=color:#a6e22e>@property</span>
+    <span style=color:#66d9ef>def</span> <span style=color:#a6e22e>unique</span>(self):
+        <span style=color:#66d9ef>return</span> self<span style=color:#f92672>.</span>__unique
+    
+    <span style=color:#66d9ef>def</span> <span style=color:#a6e22e>assign</span>(self, data, <span style=color:#f92672>*</span>args, <span style=color:#f92672>**</span>kwargs):
+        <span style=color:#e6db74>&#34;&#34;&#34; assign value into DataNode.data
+</span><span style=color:#e6db74>
+</span><span style=color:#e6db74>        Example:
+</span><span style=color:#e6db74>        &gt;&gt;&gt; assign(data, eid=&#39;123&#39;, pk=123)
+</span><span style=color:#e6db74>        &gt;&gt;&gt; assign(data, {&#39;eid&#39;: &#39;123&#39;, &#39;pk&#39;: 123})
+</span><span style=color:#e6db74>        &gt;&gt;&gt; assign([data, (eid&#39;, &#39;123&#39;), (&#39;pk&#39;, 123)])
+</span><span style=color:#e6db74>        &#34;&#34;&#34;</span>
+        <span style=color:#66d9ef>for</span> x <span style=color:#f92672>in</span> args:
+            <span style=color:#66d9ef>if</span> isinstance(x, collections<span style=color:#f92672>.</span>Iterable):
+                kwargs<span style=color:#f92672>.</span>update(dict(x))
+        <span style=color:#66d9ef>for</span> k, v <span style=color:#f92672>in</span> kwargs<span style=color:#f92672>.</span>iteritems():
+            data[k] <span style=color:#f92672>=</span> v
+</code></pre></div><p><code>data</code> 是处理的 <code>JSON</code> 数据，<code>uniq_keys</code> 对于表的唯一键字段，不一定是物理唯一，也可以是业务上的，即逻辑唯一，<code>primary_key</code> 是表的物理主键，可选，这里也是因为接口规范里的，有些维度数据更新时需要用主键。这里定义给数据类型定义一个 <code>unique</code> 属性，在后面的去重时将会使用到这个属性值，它应该是不可变的。</p><p>到这里目的已经很明显了，把每条 <code>JSON</code> （字典）数据映射成一个数据类的实例，然后再去处理，这时候就可以用 <code>Python</code> 内置的集合去做数据去重，那么接下来实现对象的 <code>hash</code> 值。</p><div class=highlight><pre style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code class=language-python data-lang=python><span style=color:#66d9ef>def</span> __eq__(self, other):
+  <span style=color:#66d9ef>if</span> type(self) <span style=color:#f92672>is</span> type(other):
+    <span style=color:#66d9ef>return</span> self<span style=color:#f92672>.</span>unique <span style=color:#f92672>==</span> other<span style=color:#f92672>.</span>unique
+  <span style=color:#66d9ef>return</span> False
+
+<span style=color:#66d9ef>def</span> __ne__(self, other):
+  <span style=color:#66d9ef>return</span> <span style=color:#f92672>not</span> __eq__(self, other)
+
+<span style=color:#66d9ef>def</span> __hash__(self):
+  <span style=color:#66d9ef>return</span> hash(self<span style=color:#f92672>.</span>unique)
+</code></pre></div><p>除了定义了类的 <code>__hash__</code> 方法，还得有比较方法 <code>__eq__</code>，<code>Python2</code> 中另外需要 <code>__ne__</code> 方法，有了这些方法类就可以放到集合里去作处理，也有了可比较的属性。</p><p>以上就是数据类基础的实现，下面主要是业务上的一些方法的实现。</p><p>实现数据类实例之间的 <code>diff</code></p><div class=highlight><pre style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code class=language-python data-lang=python><span style=color:#66d9ef>def</span> <span style=color:#a6e22e>_diff</span>(self, other, write_protect):
+  keys <span style=color:#f92672>=</span> self<span style=color:#f92672>.</span>data<span style=color:#f92672>.</span>viewkeys() <span style=color:#f92672>&amp;</span> other<span style=color:#f92672>.</span>data<span style=color:#f92672>.</span>viewkeys()
+  fields <span style=color:#f92672>=</span> {
+    k: self<span style=color:#f92672>.</span>data[k]
+    <span style=color:#66d9ef>for</span> k <span style=color:#f92672>in</span> keys <span style=color:#66d9ef>if</span> <span style=color:#f92672>not</span> compare(self<span style=color:#f92672>.</span>data[k], other<span style=color:#f92672>.</span>data[k])
+  }
+  <span style=color:#75715e># protect value, not allow update as empty</span>
+  <span style=color:#66d9ef>if</span> write_protect:
+    <span style=color:#66d9ef>for</span> k <span style=color:#f92672>in</span> keys:
+      <span style=color:#66d9ef>if</span> <span style=color:#f92672>not</span> self<span style=color:#f92672>.</span>data[k] <span style=color:#f92672>and</span> k <span style=color:#f92672>in</span> write_protect:
+        fields<span style=color:#f92672>.</span>pop(k, None)
+      
+  <span style=color:#66d9ef>return</span> fields
+</code></pre></div><p><code>write_protect</code> 参数是为了支持更新时的空保护，有些字段是不想被更新置空的</p><p>以下是接口规范的数据格式构造相关方法，这里生成接口更新时需要的 <code>key</code>，可以选择用物理主键还是唯一键字段</p><div class=highlight><pre style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code class=language-python data-lang=python><span style=color:#66d9ef>def</span> <span style=color:#a6e22e>keygen</span>(self, other<span style=color:#f92672>=</span>None):
+    <span style=color:#e6db74>&#34;&#34;&#34;
+</span><span style=color:#e6db74>    :param other:
+</span><span style=color:#e6db74>    :type other : [DataNode]
+</span><span style=color:#e6db74>
+</span><span style=color:#e6db74>    &#34;&#34;&#34;</span>
+    <span style=color:#75715e># unique keys are same between self and other</span>
+    <span style=color:#75715e># pk must be gained from other</span>
+    <span style=color:#66d9ef>if</span> <span style=color:#f92672>not</span> other:
+      other <span style=color:#f92672>=</span> self
+
+    <span style=color:#66d9ef>if</span> other<span style=color:#f92672>.</span>pk <span style=color:#f92672>and</span> other<span style=color:#f92672>.</span>data<span style=color:#f92672>.</span>get(other<span style=color:#f92672>.</span>pk):
+        key <span style=color:#f92672>=</span> {other<span style=color:#f92672>.</span>pk: other<span style=color:#f92672>.</span>data<span style=color:#f92672>.</span>get(other<span style=color:#f92672>.</span>pk)}
+    <span style=color:#66d9ef>else</span>:
+        key <span style=color:#f92672>=</span> {k: other<span style=color:#f92672>.</span>data[k] <span style=color:#66d9ef>for</span> k <span style=color:#f92672>in</span> other<span style=color:#f92672>.</span>uniq_keys}
+    <span style=color:#75715e># key without eid will cause &#34;internal parse failed, errcode: -3&#34;</span>
+    key[<span style=color:#e6db74>&#39;eid&#39;</span>] <span style=color:#f92672>=</span> other<span style=color:#f92672>.</span>data[<span style=color:#e6db74>&#39;eid&#39;</span>]
+    <span style=color:#66d9ef>return</span> key
+</code></pre></div><p>下面同样是构造接口规范数据的方法，为增删改时的数据格式，不是重要的，这些方法可以被重写，以适应不同数据维度的处理逻辑</p><div class=highlight><pre style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code class=language-python data-lang=python>    <span style=color:#66d9ef>def</span> <span style=color:#a6e22e>get_insert</span>(self, <span style=color:#f92672>*</span>args, <span style=color:#f92672>**</span>kwargs):
+        <span style=color:#75715e># body without eid will cause &#34;internal parse failed, errcode: -3&#34;</span>
+        <span style=color:#66d9ef>return</span> {<span style=color:#e6db74>&#34;body&#34;</span>: self<span style=color:#f92672>.</span>data}
+
+    <span style=color:#66d9ef>def</span> <span style=color:#a6e22e>get_update</span>(self, other, write_protect<span style=color:#f92672>=</span>None, exclude<span style=color:#f92672>=</span>None, <span style=color:#f92672>*</span>args, <span style=color:#f92672>**</span>kwargs):
+        <span style=color:#e6db74>&#34;&#34;&#34;
+</span><span style=color:#e6db74>        :param other        : Node build of data fetched from mysql
+</span><span style=color:#e6db74>        :param exclude      : fields exclued during post optimizing
+</span><span style=color:#e6db74>        :param write_protect: fields need write-protecting, forbid to set empty
+</span><span style=color:#e6db74>
+</span><span style=color:#e6db74>        &#34;&#34;&#34;</span>
+        <span style=color:#75715e># unique keys are same between self and other</span>
+        <span style=color:#75715e># pk must from other</span>
+        key <span style=color:#f92672>=</span> self<span style=color:#f92672>.</span>keygen(other)
+
+        <span style=color:#75715e># fields not to update</span>
+        <span style=color:#66d9ef>if</span> exclude:
+            self<span style=color:#f92672>.</span>_remove(exclude)
+
+        body <span style=color:#f92672>=</span> self<span style=color:#f92672>.</span>_diff(other, write_protect)
+        <span style=color:#66d9ef>if</span> <span style=color:#f92672>not</span> body:
+            logging<span style=color:#f92672>.</span>debug(
+                <span style=color:#e6db74>&#39;{}: update nothing due to no different fields&#39;</span><span style=color:#f92672>.</span>format(self))
+            <span style=color:#66d9ef>return</span> {}
+
+        <span style=color:#66d9ef>return</span> {<span style=color:#e6db74>&#34;key&#34;</span>: key, <span style=color:#e6db74>&#34;body&#34;</span>: body}
+
+    <span style=color:#66d9ef>def</span> <span style=color:#a6e22e>get_delete</span>(self, logic_del<span style=color:#f92672>=</span>True, <span style=color:#f92672>*</span>args, <span style=color:#f92672>**</span>kwargs):
+        <span style=color:#e6db74>&#34;&#34;&#34;
+</span><span style=color:#e6db74>        :param logic_del: specify whether to use logic delete
+</span><span style=color:#e6db74>
+</span><span style=color:#e6db74>        &#34;&#34;&#34;</span>
+        <span style=color:#75715e># it is from mysql when executing delete</span>
+        key <span style=color:#f92672>=</span> self<span style=color:#f92672>.</span>keygen()
+
+        <span style=color:#66d9ef>if</span> logic_del:
+            <span style=color:#75715e># 逻辑删除</span>
+            <span style=color:#75715e># &lt;u_tags&gt; write-protect</span>
+            tag <span style=color:#f92672>=</span> int(self<span style=color:#f92672>.</span>data<span style=color:#f92672>.</span>get(<span style=color:#e6db74>&#39;u_tags&#39;</span>) <span style=color:#f92672>or</span> <span style=color:#ae81ff>0</span>)
+            <span style=color:#66d9ef>if</span> tag <span style=color:#f92672>==</span> <span style=color:#ae81ff>1</span> <span style=color:#f92672>or</span> tag <span style=color:#f92672>==</span> <span style=color:#ae81ff>2</span>:
+                logging<span style=color:#f92672>.</span>debug(
+                    <span style=color:#e6db74>&#39;delete nothing due to u_tags is protected or hidden&#39;</span>)
+                <span style=color:#66d9ef>return</span> {}
+            <span style=color:#66d9ef>else</span>:
+                tag <span style=color:#f92672>=</span> <span style=color:#ae81ff>1</span>
+
+            <span style=color:#66d9ef>return</span> {<span style=color:#e6db74>&#34;key&#34;</span>: key, <span style=color:#e6db74>&#34;body&#34;</span>: {<span style=color:#e6db74>&#34;u_tags&#34;</span>: tag}}
+        <span style=color:#66d9ef>else</span>:
+            <span style=color:#75715e># 物理删除</span>
+            <span style=color:#66d9ef>return</span> {<span style=color:#e6db74>&#34;key&#34;</span>: key}
+</code></pre></div><p>现在数据类的完整实现就做好了，每条待处理的 <code>JSON</code> 数据会被封装成一个数据类实例，可以用集合去重，对比找出每条数据真实更新了的字段，并调用相应的方法生成接口需要的数据格式。这个类是可以被继承并重写里面方法，对于特殊的维度数据实现其特殊的数据类，只需要作少量改动即可，并且也只局限在数据类内部的改动，不影响下面封装的统一处理数据类的代码逻辑，实现了数据与数据处理解耦。</p><h4 id=数据类处理>数据类处理</h4><p>实现数据类实例的去重逻辑</p><div class=highlight><pre style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code class=language-python data-lang=python><span style=color:#66d9ef>class</span> <span style=color:#a6e22e>BoostPost</span>(object):
+    <span style=color:#66d9ef>def</span> __init__(self, table_name, uniq_keys, primary_key<span style=color:#f92672>=</span>None, eid<span style=color:#f92672>=</span>None, datanode<span style=color:#f92672>=</span>DataNode):
+        self<span style=color:#f92672>.</span>datanode <span style=color:#f92672>=</span> datanode
+        self<span style=color:#f92672>.</span>table_name <span style=color:#f92672>=</span> table_name
+        self<span style=color:#f92672>.</span>uniq_keys <span style=color:#f92672>=</span> uniq_keys
+        self<span style=color:#f92672>.</span>primary_key <span style=color:#f92672>=</span> primary_key
+        self<span style=color:#f92672>.</span>eid <span style=color:#f92672>=</span> eid
+        self<span style=color:#f92672>.</span>nodes1 <span style=color:#f92672>=</span> None
+        self<span style=color:#f92672>.</span>nodes2 <span style=color:#f92672>=</span> None
+        self<span style=color:#f92672>.</span>insert <span style=color:#f92672>=</span> []
+        self<span style=color:#f92672>.</span>update <span style=color:#f92672>=</span> []
+        self<span style=color:#f92672>.</span>delete <span style=color:#f92672>=</span> []
+        self<span style=color:#f92672>.</span>__post <span style=color:#f92672>=</span> {self<span style=color:#f92672>.</span>table_name: dict()}
+
+    <span style=color:#66d9ef>def</span> <span style=color:#a6e22e>spawn</span>(self, records_new, records_old):
+        <span style=color:#e6db74>&#34;&#34;&#34;transform dict records to DataNode.
+</span><span style=color:#e6db74>        NOTE: notice the order of params
+</span><span style=color:#e6db74>
+</span><span style=color:#e6db74>        :param records_old         : old records from mysql
+</span><span style=color:#e6db74>        :type  records_old         : [list]
+</span><span style=color:#e6db74>        :param records_new         : new records to update
+</span><span style=color:#e6db74>        :type  records_new         : [list]
+</span><span style=color:#e6db74>
+</span><span style=color:#e6db74>        &#34;&#34;&#34;</span>
+        <span style=color:#66d9ef>if</span> isinstance(self<span style=color:#f92672>.</span>nodes1, set) <span style=color:#f92672>and</span> isinstance(self<span style=color:#f92672>.</span>nodes2, set):
+            <span style=color:#66d9ef>raise</span> BoostPostError(<span style=color:#e6db74>&#39;already spawned, do not spawn it again&#39;</span>)
+
+        <span style=color:#66d9ef>try</span>:
+            self<span style=color:#f92672>.</span>nodes1 <span style=color:#f92672>=</span> {
+                self<span style=color:#f92672>.</span>datanode(_,
+                              self<span style=color:#f92672>.</span>uniq_keys,
+                              eid<span style=color:#f92672>=</span>self<span style=color:#f92672>.</span>eid,
+                              primary_key<span style=color:#f92672>=</span>self<span style=color:#f92672>.</span>primary_key)
+                <span style=color:#66d9ef>for</span> _ <span style=color:#f92672>in</span> records_new
+            }
+            self<span style=color:#f92672>.</span>nodes2 <span style=color:#f92672>=</span> {
+                self<span style=color:#f92672>.</span>datanode(_,
+                              self<span style=color:#f92672>.</span>uniq_keys,
+                              eid<span style=color:#f92672>=</span>self<span style=color:#f92672>.</span>eid,
+                              primary_key<span style=color:#f92672>=</span>self<span style=color:#f92672>.</span>primary_key)
+                <span style=color:#66d9ef>for</span> _ <span style=color:#f92672>in</span> records_old
+            }
+        <span style=color:#66d9ef>except</span> DataNodeError:
+            <span style=color:#66d9ef>raise</span> BoostPostError(
+                <span style=color:#e6db74>&#39;data without eid or invaild eid&#39;</span>)
+</code></pre></div><p><code>table_name</code> 是表名，即一个数据维度，<code>datanode</code> 对应数据维度的数据类，默认是上文实现的数据类基类，如果有特殊需求，那么就传入修改后的数据类。<code>self.nodes1</code> <code>self.nodes2</code> 是存放数据类实例的容器（集合），<code>self.insert</code> <code>self.update</code> <code>self.delete</code> 存放数据处理完后的接口所需的增删改数据。<code>spawn</code> 方法里把传入的所有 <code>JSON</code> 数据转换成了对应数据类实例。</p><p>找出新增数据，调用了 <code>DataNode</code> 的 <code>get_insert</code> 方法</p><div class=highlight><pre style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code class=language-python data-lang=python>    <span style=color:#66d9ef>def</span> <span style=color:#a6e22e>post_insert</span>(self, <span style=color:#f92672>*</span>args, <span style=color:#f92672>**</span>kwargs):
+        <span style=color:#66d9ef>if</span> len(self<span style=color:#f92672>.</span>insert) <span style=color:#f92672>&gt;</span> <span style=color:#ae81ff>0</span>:
+            <span style=color:#66d9ef>raise</span> BoostPostError(<span style=color:#e6db74>&#39;already did it, do not invoke `post_insert` again&#39;</span>)
+
+        self<span style=color:#f92672>.</span>insert<span style=color:#f92672>.</span>extend([_<span style=color:#f92672>.</span>get_insert(<span style=color:#f92672>*</span>args, <span style=color:#f92672>**</span>kwargs) <span style=color:#66d9ef>for</span> _ <span style=color:#f92672>in</span> (self<span style=color:#f92672>.</span>nodes1 <span style=color:#f92672>-</span> self<span style=color:#f92672>.</span>nodes2)])
+        self<span style=color:#f92672>.</span>insert <span style=color:#f92672>=</span> [_ <span style=color:#66d9ef>for</span> _ <span style=color:#f92672>in</span> self<span style=color:#f92672>.</span>insert <span style=color:#66d9ef>if</span> _]
+        logging<span style=color:#f92672>.</span>debug(<span style=color:#e6db74>&#39;NODES TO INSERT: {}&#39;</span><span style=color:#f92672>.</span>format(len(self<span style=color:#f92672>.</span>insert)))
+        <span style=color:#66d9ef>if</span> len(self<span style=color:#f92672>.</span>insert) <span style=color:#f92672>&gt;</span> <span style=color:#ae81ff>0</span>:
+            self<span style=color:#f92672>.</span>__post[self<span style=color:#f92672>.</span>table_name]<span style=color:#f92672>.</span>setdefault(<span style=color:#e6db74>&#39;insert&#39;</span>, [])<span style=color:#f92672>.</span>extend(self<span style=color:#f92672>.</span>insert)
+</code></pre></div><p>找出更新数据，调用了 <code>DataNode</code> 的 <code>get_update</code> 方法</p><div class=highlight><pre style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code class=language-python data-lang=python>    <span style=color:#66d9ef>def</span> <span style=color:#a6e22e>post_update</span>(self, write_protect<span style=color:#f92672>=</span>None, exclude<span style=color:#f92672>=</span>None, <span style=color:#f92672>*</span>args, <span style=color:#f92672>**</span>kwargs):
+        <span style=color:#e6db74>&#34;&#34;&#34;
+</span><span style=color:#e6db74>        :param write_protect: fields need write-protecting, forbid to set empty
+</span><span style=color:#e6db74>        :param exclude      : fields exclued during post optimizing
+</span><span style=color:#e6db74>
+</span><span style=color:#e6db74>        &#34;&#34;&#34;</span>
+        <span style=color:#75715e># TODO: check `post_update` invoking</span>
+        <span style=color:#66d9ef>if</span> len(self<span style=color:#f92672>.</span>update) <span style=color:#f92672>&gt;</span> <span style=color:#ae81ff>0</span>:
+            logging<span style=color:#f92672>.</span>warning(<span style=color:#e6db74>&#39;ensure it</span><span style=color:#ae81ff>\&#39;</span><span style=color:#e6db74>s the first to invoke `post_update`,&#39;</span>
+                            <span style=color:#e6db74>&#39;maybe cause wrong post data if not&#39;</span>)
+
+        <span style=color:#75715e># 计算出待更新的数据</span>
+        mine <span style=color:#f92672>=</span> [_ <span style=color:#66d9ef>for</span> _ <span style=color:#f92672>in</span> self<span style=color:#f92672>.</span>nodes1 <span style=color:#66d9ef>if</span> _ <span style=color:#f92672>in</span> self<span style=color:#f92672>.</span>nodes2]
+        others <span style=color:#f92672>=</span> [_ <span style=color:#66d9ef>for</span> _ <span style=color:#f92672>in</span> self<span style=color:#f92672>.</span>nodes2 <span style=color:#66d9ef>if</span> _ <span style=color:#f92672>in</span> self<span style=color:#f92672>.</span>nodes1]
+        <span style=color:#66d9ef>if</span> len(mine) <span style=color:#f92672>==</span> <span style=color:#ae81ff>0</span> <span style=color:#f92672>and</span> len(others) <span style=color:#f92672>==</span> <span style=color:#ae81ff>0</span>:
+            self<span style=color:#f92672>.</span>update <span style=color:#f92672>=</span> []
+        <span style=color:#66d9ef>else</span>:
+            <span style=color:#75715e># sort nodes in order to keep one-to-one correspondence</span>
+            self<span style=color:#f92672>.</span>update <span style=color:#f92672>=</span> [
+                x<span style=color:#f92672>.</span>get_update(y, write_protect, exclude, <span style=color:#f92672>*</span>args, <span style=color:#f92672>**</span>kwargs)
+                <span style=color:#66d9ef>for</span> x, y <span style=color:#f92672>in</span> zip(sorted(mine, key<span style=color:#f92672>=</span><span style=color:#66d9ef>lambda</span> x: x<span style=color:#f92672>.</span>unique),
+                                sorted(others, key<span style=color:#f92672>=</span><span style=color:#66d9ef>lambda</span> x: x<span style=color:#f92672>.</span>unique))
+            ]
+        self<span style=color:#f92672>.</span>update <span style=color:#f92672>=</span> [_ <span style=color:#66d9ef>for</span> _ <span style=color:#f92672>in</span> self<span style=color:#f92672>.</span>update <span style=color:#66d9ef>if</span> _]
+        logging<span style=color:#f92672>.</span>debug(<span style=color:#e6db74>&#39;NODES TO UPDATE: {}&#39;</span><span style=color:#f92672>.</span>format(len(self<span style=color:#f92672>.</span>update)))
+        <span style=color:#66d9ef>if</span> len(self<span style=color:#f92672>.</span>update) <span style=color:#f92672>&gt;</span> <span style=color:#ae81ff>0</span>:
+            self<span style=color:#f92672>.</span>__post[self<span style=color:#f92672>.</span>table_name]<span style=color:#f92672>.</span>setdefault(<span style=color:#e6db74>&#39;update&#39;</span>, [])<span style=color:#f92672>.</span>extend(self<span style=color:#f92672>.</span>update)
+</code></pre></div><p>找出删除数据，同理</p><p>找出所有增删改数据，封装一下，简化步骤，一次调用全部</p><div class=highlight><pre style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code class=language-python data-lang=python>    <span style=color:#66d9ef>def</span> <span style=color:#a6e22e>post_all</span>(self, <span style=color:#f92672>*</span>args, <span style=color:#f92672>**</span>kwargs):
+        <span style=color:#66d9ef>if</span> len(self<span style=color:#f92672>.</span>insert) <span style=color:#f92672>&gt;</span> <span style=color:#ae81ff>0</span> <span style=color:#f92672>or</span> len(self<span style=color:#f92672>.</span>update) <span style=color:#f92672>&gt;</span> <span style=color:#ae81ff>0</span> <span style=color:#f92672>or</span> len(self<span style=color:#f92672>.</span>delete) <span style=color:#f92672>&gt;</span> <span style=color:#ae81ff>0</span>:
+            <span style=color:#66d9ef>raise</span> BoostPostError(<span style=color:#e6db74>&#39;already posted, do not invoke `post_all`&#39;</span>)
+
+        <span style=color:#75715e># pop from kwargs avoid `TypeError: post_xxx() got multiple</span>
+        <span style=color:#75715e># values for keyword argument xxx`</span>
+        self<span style=color:#f92672>.</span>post_insert(self, <span style=color:#f92672>*</span>args, <span style=color:#f92672>**</span>kwargs)
+        write_protect <span style=color:#f92672>=</span> kwargs<span style=color:#f92672>.</span>pop(<span style=color:#e6db74>&#39;write_protect&#39;</span>, None)
+        exclude <span style=color:#f92672>=</span> kwargs<span style=color:#f92672>.</span>pop(<span style=color:#e6db74>&#39;exclude&#39;</span>, None)
+        self<span style=color:#f92672>.</span>post_update(write_protect, exclude, <span style=color:#f92672>*</span>args, <span style=color:#f92672>**</span>kwargs)
+        is_delete <span style=color:#f92672>=</span> kwargs<span style=color:#f92672>.</span>pop(<span style=color:#e6db74>&#39;is_delete&#39;</span>, False)
+        logic_del <span style=color:#f92672>=</span> kwargs<span style=color:#f92672>.</span>pop(<span style=color:#e6db74>&#39;logic_del&#39;</span>, True)
+        self<span style=color:#f92672>.</span>post_delete(is_delete, logic_del, <span style=color:#f92672>*</span>args, <span style=color:#f92672>**</span>kwargs)
+</code></pre></div><p>返回完整的接口数据</p><div class=highlight><pre style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code class=language-python data-lang=python><span style=color:#a6e22e>@property</span>
+<span style=color:#66d9ef>def</span> <span style=color:#a6e22e>post</span>(self):
+    <span style=color:#66d9ef>return</span> self<span style=color:#f92672>.</span>__post <span style=color:#66d9ef>if</span> self<span style=color:#f92672>.</span>__post<span style=color:#f92672>.</span>get(self<span style=color:#f92672>.</span>table_name) <span style=color:#66d9ef>else</span> {}
+</code></pre></div><p>做了以上封装之后我们就可以直接使用这个 <code>BoostPost</code> 模块去做真实更新处理，不必关心具体数据是什么样，各个维度数据放在类数据类中自定义和规范，数据被抽象出来作为一个广泛的数据类，数据处理逻辑不关心这个数据类内部的细节。</p><h4 id=使用示例>使用示例</h4><p>用一个简单的例子来看下封装的效果</p><div class=highlight><pre style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code class=language-python data-lang=python><span style=color:#f92672>from</span> boostpost <span style=color:#f92672>import</span> DataNode, BoostPost
+
+boost <span style=color:#f92672>=</span> BoostPost(<span style=color:#e6db74>&#39;t_products&#39;</span>, uniq_keys<span style=color:#f92672>=</span>[<span style=color:#e6db74>&#39;pid&#39;</span>])
+boost<span style=color:#f92672>.</span>spawn(records_new, records_old)
+boost<span style=color:#f92672>.</span>post_all(
+    write_protect<span style=color:#f92672>=</span>[<span style=color:#e6db74>&#39;product_name&#39;</span>],
+    exclude<span style=color:#f92672>=</span>[<span style=color:#e6db74>&#39;create_time&#39;</span>],
+)
+post_data <span style=color:#f92672>=</span> boost<span style=color:#f92672>.</span>post
+</code></pre></div><h2 id=结语>结语</h2><p>工作时我们会接手一堆祖传代码，可能难以阅读和维护，这时候就可以想办法考虑改善代码质量了，为了后面工作的效率和减少故障发生概率。</p><p>推荐两本书，讲解改善代码质量的</p><ul><li><a href=https://book.douban.com/subject/4262627/>《重构 - 改善既有代码的设计》</a></li><li><a href=https://book.douban.com/subject/10797189/>《编写可读代码的艺术》</a></li></ul></section><div class=post-tags><nav class="nav tags"><ul class=tags><li><a href=/tags/%E6%8A%80%E6%9C%AF>技术</a></li></ul></nav></div></article></main><footer><hr><a class=soc href=https://github.com/zhiweio title=GitHub><i data-feather=github></i></a>|⚡️
+2021 © Wang Zhiwei | <a href=https://github.com/athul/archie>Archie Theme</a> | Built with <a href=https://gohugo.io>Hugo</a></footer><script>feather.replace()</script></div></body></html>

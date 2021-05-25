@@ -1,0 +1,446 @@
+<!doctype html><html><head><meta charset=utf-8><meta http-equiv=x-ua-compatible content="IE=edge"><title>BoostPost - Data Class 最佳（误）实践 - Wang Zhiwei</title><meta name=viewport content="width=device-width,initial-scale=1"><meta property="og:image" content><meta property="og:title" content="BoostPost - Data Class 最佳（误）实践"><meta property="og:description" content="BoostPost 是一个辅助“更新优化”数据处理的工具组件，其旨在减轻为中间件写接口构造请求数据的负担。 输入新旧两批数据，输出完全适用于 API 接口的增、删、改数据，避免手动处理数据的繁琐。支持扩展，可以方便地添加额外的处理逻辑"><meta property="og:type" content="article"><meta property="og:url" content="https://zhiweio.github.io/posts/dataclass-in-boostpost/"><meta property="article:section" content="posts"><meta property="article:published_time" content="2021-05-25T00:00:00+00:00"><meta property="article:modified_time" content="2021-05-25T00:00:00+00:00"><meta name=twitter:card content="summary"><meta name=twitter:title content="BoostPost - Data Class 最佳（误）实践"><meta name=twitter:description content="BoostPost 是一个辅助“更新优化”数据处理的工具组件，其旨在减轻为中间件写接口构造请求数据的负担。 输入新旧两批数据，输出完全适用于 API 接口的增、删、改数据，避免手动处理数据的繁琐。支持扩展，可以方便地添加额外的处理逻辑"><script src=https://zhiweio.github.io/js/feather.min.js></script><link href=https://zhiweio.github.io/css/fonts.css rel=stylesheet><link rel=stylesheet type=text/css media=screen href=https://zhiweio.github.io/css/main.css></head><body><div class=content><header><div class=main><a href=https://zhiweio.github.io/>Wang Zhiwei</a></div><nav><a href=/>Home</a>
+<a href=/posts>All posts</a>
+<a href=/about>About</a>
+<a href=/tags>Tags</a></nav></header><main><article><div class=title><h1 class=title>BoostPost - Data Class 最佳（误）实践</h1><div class=meta>Posted on May 25, 2021</div></div><section class=body><h2 id=前言>前言</h2><p>前一篇博客介绍了在数据处理工作中引入 <code>Data Class</code> 概念，当时的实现很不完善，只是灵机一动下花了半小时便写出了一个粗糙的原型库，在后续的工作中，我切合实际的需求场景为此进行了扩展和优化。现在，<code>BoostPost</code> 已经是一个能够帮助解决处理数据时大部分对比更新工作的较为完善的库了。</p><p>这里另起篇章深入介绍 <code>BoostPost</code> 的设计灵感和具体实现，以及在特定场景下数据处理工作中带来的效率提升。</p><h2 id=正文>正文</h2><h3 id=数据处理场景>数据处理场景</h3><p>有 API 接口定义如下：</p><ul><li><strong>URL</strong>: /write/update_base</li><li><strong>Method</strong>: POST</li><li><strong>Request Body</strong>:</li></ul><div class=highlight><pre style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code class=language-json data-lang=json>{
+  <span style=color:#f92672>&#34;t_people&#34;</span>: {
+    <span style=color:#f92672>&#34;insert&#34;</span>: [
+      {
+        <span style=color:#f92672>&#34;body&#34;</span>: {
+          <span style=color:#f92672>&#34;gender&#34;</span>: <span style=color:#e6db74>&#34;Genderqueer&#34;</span>,
+          <span style=color:#f92672>&#34;first_name&#34;</span>: <span style=color:#e6db74>&#34;Tamma&#34;</span>,
+          <span style=color:#f92672>&#34;last_name&#34;</span>: <span style=color:#e6db74>&#34;Gledhall&#34;</span>,
+          <span style=color:#f92672>&#34;ip_address&#34;</span>: <span style=color:#e6db74>&#34;112.192.229.205&#34;</span>,
+          <span style=color:#f92672>&#34;email&#34;</span>: <span style=color:#e6db74>&#34;tgledhall2@oaic.gov.au&#34;</span>
+        }
+      }
+    ],
+    <span style=color:#f92672>&#34;update&#34;</span>: [
+      {
+        <span style=color:#f92672>&#34;body&#34;</span>: {
+          <span style=color:#f92672>&#34;email&#34;</span>: <span style=color:#e6db74>&#34;bgraalman1@gmail.com&#34;</span>
+        },
+        <span style=color:#f92672>&#34;key&#34;</span>: {
+          <span style=color:#f92672>&#34;first_name&#34;</span>: <span style=color:#e6db74>&#34;Barr&#34;</span>,
+          <span style=color:#f92672>&#34;last_name&#34;</span>: <span style=color:#e6db74>&#34;Graalman&#34;</span>
+        }
+      }
+    ],
+    <span style=color:#f92672>&#34;delete&#34;</span>: [
+      {
+        <span style=color:#f92672>&#34;key&#34;</span>: {
+          <span style=color:#f92672>&#34;first_name&#34;</span>: <span style=color:#e6db74>&#34;Delila&#34;</span>,
+          <span style=color:#f92672>&#34;last_name&#34;</span>: <span style=color:#e6db74>&#34;Coveny&#34;</span>
+        }
+      }
+    ]
+  }
+}
+</code></pre></div><p>需要从新旧两批数据生成以上更新数据格式，输入数据如下：</p><p><strong>对应 <code>MySQL</code> 表中展示</strong></p><p>新</p><table><thead><tr><th>first_name</th><th>last_name</th><th>email</th><th>gender</th><th>ip_address</th></tr></thead><tbody><tr><td>Barr</td><td>Graalman</td><td><a href=mailto:bgraalman1@gmail.com>bgraalman1@gmail.com</a></td><td>Non-binary</td><td>66.234.0.116</td></tr><tr><td>Tamma</td><td>Gledhall</td><td><a href=mailto:tgledhall2@oaic.gov.au>tgledhall2@oaic.gov.au</a></td><td>Genderqueer</td><td>112.192.229.205</td></tr></tbody></table><p>旧</p><table><thead><tr><th>id</th><th>first_name</th><th>last_name</th><th>email</th><th>gender</th><th>ip_address</th></tr></thead><tbody><tr><td>1</td><td>Delila</td><td>Coveny</td><td><a href=mailto:dcoveny0@howstuffworks.com>dcoveny0@howstuffworks.com</a></td><td>Female</td><td>122.202.68.84</td></tr><tr><td>2</td><td>Barr</td><td>Graalman</td><td><a href=mailto:bgraalman1@digg.com>bgraalman1@digg.com</a></td><td>Non-binary</td><td>66.234.0.116</td></tr></tbody></table><p><strong>对应 <code>JSON</code> 展示</strong></p><p>新</p><div class=highlight><pre style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code class=language-json data-lang=json>[
+  {
+    <span style=color:#f92672>&#34;gender&#34;</span>: <span style=color:#e6db74>&#34;Non-binary&#34;</span>,
+    <span style=color:#f92672>&#34;first_name&#34;</span>: <span style=color:#e6db74>&#34;Barr&#34;</span>,
+    <span style=color:#f92672>&#34;last_name&#34;</span>: <span style=color:#e6db74>&#34;Graalman&#34;</span>,
+    <span style=color:#f92672>&#34;ip_address&#34;</span>: <span style=color:#e6db74>&#34;66.234.0.116&#34;</span>,
+    <span style=color:#f92672>&#34;email&#34;</span>: <span style=color:#e6db74>&#34;bgraalman1@gmail.com&#34;</span>
+  },
+  {
+    <span style=color:#f92672>&#34;gender&#34;</span>: <span style=color:#e6db74>&#34;Genderqueer&#34;</span>,
+    <span style=color:#f92672>&#34;first_name&#34;</span>: <span style=color:#e6db74>&#34;Tamma&#34;</span>,
+    <span style=color:#f92672>&#34;last_name&#34;</span>: <span style=color:#e6db74>&#34;Gledhall&#34;</span>,
+    <span style=color:#f92672>&#34;ip_address&#34;</span>: <span style=color:#e6db74>&#34;112.192.229.205&#34;</span>,
+    <span style=color:#f92672>&#34;email&#34;</span>: <span style=color:#e6db74>&#34;tgledhall2@oaic.gov.au&#34;</span>
+  }
+]
+</code></pre></div><p>旧</p><div class=highlight><pre style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code class=language-json data-lang=json>[
+  {
+    <span style=color:#f92672>&#34;first_name&#34;</span>: <span style=color:#e6db74>&#34;Delila&#34;</span>,
+    <span style=color:#f92672>&#34;last_name&#34;</span>: <span style=color:#e6db74>&#34;Coveny&#34;</span>,
+    <span style=color:#f92672>&#34;gender&#34;</span>: <span style=color:#e6db74>&#34;Female&#34;</span>,
+    <span style=color:#f92672>&#34;email&#34;</span>: <span style=color:#e6db74>&#34;dcoveny0@howstuffworks.com&#34;</span>,
+    <span style=color:#f92672>&#34;ip_address&#34;</span>: <span style=color:#e6db74>&#34;122.202.68.84&#34;</span>,
+    <span style=color:#f92672>&#34;id&#34;</span>: <span style=color:#ae81ff>1</span>
+  },
+  {
+    <span style=color:#f92672>&#34;first_name&#34;</span>: <span style=color:#e6db74>&#34;Barr&#34;</span>,
+    <span style=color:#f92672>&#34;last_name&#34;</span>: <span style=color:#e6db74>&#34;Graalman&#34;</span>,
+    <span style=color:#f92672>&#34;gender&#34;</span>: <span style=color:#e6db74>&#34;Non-binary&#34;</span>,
+    <span style=color:#f92672>&#34;email&#34;</span>: <span style=color:#e6db74>&#34;bgraalman1@digg.com&#34;</span>,
+    <span style=color:#f92672>&#34;ip_address&#34;</span>: <span style=color:#e6db74>&#34;66.234.0.116&#34;</span>,
+    <span style=color:#f92672>&#34;id&#34;</span>: <span style=color:#ae81ff>2</span>
+  }
+]
+</code></pre></div><blockquote><p>旧数据多了 <code>id</code> 字段，这是 <code>MySQL</code> 表的主键</p></blockquote><p>如何构造一个更新请求的数据包，涉及 <code>Python</code> 程序中对 <code>list</code> 和 <code>dict</code> 对象的大量处理操作，也许你会写很多的 <code>for</code> 循环，还会有很多 <code>call-by-key</code> 和 <code>call-by-rank</code> 的取值赋值。能够想象到将会写出一堆多层嵌套的代码，最终只为了生成一条多层嵌套的 <code>JSON</code> 数据。</p><p>另外还需要考虑以下情况：</p><ul><li>倘若换一个 API 接口定义，数据格式稍稍不一样</li><li>倘若当前维度只会增量更新，只有新增和更新的数据</li><li>倘若当前维度不会真的删除数据，而是通过标志位逻辑删除</li><li>倘若还有更新优先级，判断出某种来源的数据低优先级情况下不更新</li><li>倘若&mldr;</li></ul><p>真实环境下会有很多特殊的业务逻辑，需要能够兼容和扩展。</p><h3 id=不断重复的编码>不断重复的编码</h3><p>再项目中的这些实现，每个人都有他自己的想法，每次都会从头至尾重新写一遍<strong>更新优化</strong>的处理流程。</p><p>梳理一下主要处理流程：</p><ol><li><p>取每条数据唯一键的值作为 <code>key</code>，整条数据作为 <code>value</code> 构造一个字典</p></li><li><p><code>for</code> 循环新数据，<code>key</code> 不在旧数据中的表示新增，在旧数据中的表示更新</p></li><li><p><code>for</code> 循环旧数据，<code>key</code> 不在新数据中的表示删除</p></li><li><p>对更新的数据项，逐个字段对比，只保留值有变化的字段</p></li><li><p>对新增、更新、删除的所有数据项添加额外的元信息，合并生成接口所需的请求数据</p></li></ol><p>观察项目中多处代码，总结有以上处理逻辑，每一处还有一点自己的特色。尽管大体逻辑类似，但并没有人将其抽离出来作为通用的处理模块，其实这是很容易便做成的事，些许细节可以不用考虑太多，后面可以不断优化迭代。</p><h3 id=data-class-概念>Data Class 概念</h3><p>分析上文中介绍的实现，取值为 <code>key</code>，再做交集、差集，这不就是集合思想嘛？</p><p>将数据项映射为 <code>key-value</code> 形式，是为了后续处理时方便地取完整数据和用 <code>key</code> 进行集合操作，这里 <code>key</code> 可以看做数据的索引，延伸一下，数据的索引好比 <code>Python</code> 对象的哈希值，<code>Python</code> 对象可以放进 <code>set</code>，直接利用现有的集合操作。</p><p>再延伸一下，每条数据对应一个 <code>Python</code> 类的实例，那么这个类自然而然就叫数据类。</p><p><strong>数据类</strong>（Data Class）指拥有一些值域（fields），以及用于访问（读写〕这些值域的函数，除此之外一无长物。这样的classes只是一种「不会说话的数据容器」。</p><p>在 <code>Haskell</code> 中有关键词 <code>data</code>，可以定义新的数据类型，一定程度上可以看做是数据类。</p><p>在 <code>3.7</code> 之后的 <code>Python</code> 版本中，有个名为 <code>dataclasses</code> 的模块，它就是数据类概念在 <code>Python</code> 里的实现，对于数据处理非常方便。源于 <code>Python3.6</code> 时期的一个第三方库，因为太好用且使用广泛，在 <code>3.7</code> 之后被加入进了标准库里。以下是官方文档和原项目的 <code>GitHub</code> 链接</p><ul><li>原项目地址: <a href=https://github.com/ericvsmith/dataclasses>https://github.com/ericvsmith/dataclasses</a></li><li>官方文档: <a href=https://docs.python.org/3/library/dataclasses.html>https://docs.python.org/3/library/dataclasses.html</a></li><li><a href=https://www.python.org/dev/peps/pep-0557/>PEP 557 – Data Classes</a></li></ul><p>这里有一篇对比 <code>Data Class</code> 在 <code>Haskell</code> 和 <code>Python</code> 中的使用和差异的文章</p><ul><li><a href=https://typeclasses.com/python/data-classes>Data classes</a> - Type Classes</li></ul><h3 id=理想的功能模块>理想的功能模块</h3><p>了解了数据类的概念，这时便可以大胆设想，数据项的处理都可以转换为对数据类的处理。数据项的唯一特征对应数据类的哈希值，两批数据类实例放进两个集合容器里找出交、差集，对于交集中的实例，就是待更新的数据项，在进行逐个字段值对比。</p><p>理想的情况下，仅需两三行代码便能完成一次“更新优化”处理，伪代码演示如下：</p><div class=highlight><pre style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code class=language-python data-lang=python>boost <span style=color:#f92672>=</span> BoostPost(
+	table<span style=color:#f92672>=</span><span style=color:#e6db74>&#39;t_xxx&#39;</span>,
+    unique<span style=color:#f92672>=</span>[<span style=color:#e6db74>&#39;a&#39;</span>, <span style=color:#e6db74>&#39;b&#39;</span>]
+)
+boost<span style=color:#f92672>.</span>get_post(new_data, old_data)
+<span style=color:#66d9ef>print</span>(boost<span style=color:#f92672>.</span>post_data)
+</code></pre></div><p>这些只是最基础的场景，复杂场景下，还有前文中描述的各种特殊逻辑，需要支持。</p><p>通过一些具体的例子来描述：</p><p><strong>逻辑删除</strong></p><p>数据库表中有字段 <code>is_history</code> 标识数据项是否有效，置 <code>1</code> 时表示已删除。对应处理逻辑就是旧数据与新数据的差集，每一个数据类实例，生成相应的更新格式数据，其中只更新 <code>is_history</code> 为 <code>1</code>。</p><p><strong>来源优先级</strong></p><p>数据来源是分别是 A 和 ，其中 A 的优先级大于 B，在更新时，如果新数据是 B，旧数据是 A，那么这条数据项就直接跳过，不做更新。对应处理逻辑就是两个数据集合的交集，每一对新旧数据类实例都先比较来源优先级，其后再决定是否对比找出更新的字段。</p><p><strong>不同的接口数据格式</strong></p><p>不同于前文中定义的 API 接口，现有新的更新接口，其请求数据格式定义如下所示</p><div class=highlight><pre style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code class=language-json data-lang=json>{
+  <span style=color:#f92672>&#34;t_people&#34;</span>: {
+    <span style=color:#f92672>&#34;insert&#34;</span>: [
+      {
+        <span style=color:#f92672>&#34;body&#34;</span>: {
+          <span style=color:#f92672>&#34;gender&#34;</span>: <span style=color:#e6db74>&#34;Genderqueer&#34;</span>,
+          <span style=color:#f92672>&#34;first_name&#34;</span>: <span style=color:#e6db74>&#34;Tamma&#34;</span>,
+          <span style=color:#f92672>&#34;last_name&#34;</span>: <span style=color:#e6db74>&#34;Gledhall&#34;</span>,
+          <span style=color:#f92672>&#34;ip_address&#34;</span>: <span style=color:#e6db74>&#34;112.192.229.205&#34;</span>,
+          <span style=color:#f92672>&#34;email&#34;</span>: <span style=color:#e6db74>&#34;tgledhall2@oaic.gov.au&#34;</span>
+        },
+        <span style=color:#f92672>&#34;split_params&#34;</span>: <span style=color:#e6db74>&#34;112.192.229.205&#34;</span>
+      }
+    ],
+    <span style=color:#f92672>&#34;update&#34;</span>: [
+      {
+        <span style=color:#f92672>&#34;body&#34;</span>: {
+          <span style=color:#f92672>&#34;email&#34;</span>: <span style=color:#e6db74>&#34;bgraalman1@gmail.com&#34;</span>
+        },
+        <span style=color:#f92672>&#34;split_params&#34;</span>: <span style=color:#e6db74>&#34;66.234.0.116&#34;</span>,
+        <span style=color:#f92672>&#34;key&#34;</span>: {
+          <span style=color:#f92672>&#34;first_name&#34;</span>: <span style=color:#e6db74>&#34;Barr&#34;</span>,
+          <span style=color:#f92672>&#34;last_name&#34;</span>: <span style=color:#e6db74>&#34;Graalman&#34;</span>
+        }
+      }
+    ],
+    <span style=color:#f92672>&#34;delete&#34;</span>: [
+      {
+        <span style=color:#f92672>&#34;split_params&#34;</span>: <span style=color:#e6db74>&#34;122.202.68.84&#34;</span>,
+        <span style=color:#f92672>&#34;key&#34;</span>: {
+          <span style=color:#f92672>&#34;first_name&#34;</span>: <span style=color:#e6db74>&#34;Delila&#34;</span>,
+          <span style=color:#f92672>&#34;last_name&#34;</span>: <span style=color:#e6db74>&#34;Coveny&#34;</span>
+        }
+      }
+    ]
+  }
+}
+</code></pre></div><p>这里只是简单地添加了 <code>split_params</code> 参数，也许其它 API 接口的改动会很大。</p><p>要到达的效果是，对于以上的特殊场景都能够支持，可以是原生支持，可以是简单地只改动少数几行代码来支持，这里便需要对外提供扩展接口，方便二次开发。</p><h3 id=动手实现>动手实现</h3><blockquote><p>这里的代码隐去了一些无关紧要的细节和特殊的功能，了解大概设计思路即可</p></blockquote><p>定义数据类基类</p><div class=highlight><pre style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code class=language-python data-lang=python><span style=color:#66d9ef>class</span> <span style=color:#a6e22e>BaseDataNode</span>(object):
+    <span style=color:#66d9ef>def</span> __init__(self, data, uniq_keys, primary_key<span style=color:#f92672>=</span>None, <span style=color:#f92672>**</span>kwargs):
+        self<span style=color:#f92672>.</span>data <span style=color:#f92672>=</span> data
+        self<span style=color:#f92672>.</span>uniq_keys <span style=color:#f92672>=</span> uniq_keys
+        self<span style=color:#f92672>.</span>pk <span style=color:#f92672>=</span> primary_key
+        self<span style=color:#f92672>.</span>__unique <span style=color:#f92672>=</span> tuple([self<span style=color:#f92672>.</span>data[k] <span style=color:#66d9ef>for</span> k <span style=color:#f92672>in</span> self<span style=color:#f92672>.</span>uniq_keys])
+	
+    <span style=color:#75715e># 数据项的唯一键字段的值，可以视作索引</span>
+    <span style=color:#a6e22e>@property</span>
+    <span style=color:#66d9ef>def</span> <span style=color:#a6e22e>unique</span>(self):
+        <span style=color:#66d9ef>return</span> self<span style=color:#f92672>.</span>__unique
+
+    <span style=color:#66d9ef>def</span> __eq__(self, other):
+        <span style=color:#66d9ef>if</span> type(self) <span style=color:#f92672>is</span> type(other):
+            <span style=color:#66d9ef>return</span> self<span style=color:#f92672>.</span>unique <span style=color:#f92672>==</span> other<span style=color:#f92672>.</span>unique
+        <span style=color:#66d9ef>return</span> False
+
+    <span style=color:#75715e># 数据类的哈希值</span>
+    <span style=color:#66d9ef>def</span> __hash__(self):
+        <span style=color:#66d9ef>return</span> hash(self<span style=color:#f92672>.</span>unique)
+
+    <span style=color:#66d9ef>def</span> <span style=color:#a6e22e>_remove</span>(self, fields):
+        <span style=color:#e6db74>&#34;&#34;&#34;
+</span><span style=color:#e6db74>        :param fields: fields to remove form data
+</span><span style=color:#e6db74>        :type fields : [list]
+</span><span style=color:#e6db74>
+</span><span style=color:#e6db74>        &#34;&#34;&#34;</span>
+        <span style=color:#66d9ef>for</span> x <span style=color:#f92672>in</span> fields:
+            self<span style=color:#f92672>.</span>data<span style=color:#f92672>.</span>pop(x, None)
+	
+    <span style=color:#66d9ef>def</span> <span style=color:#a6e22e>_diff</span>(self, other, write_protect<span style=color:#f92672>=</span>None):
+        <span style=color:#75715e># write_protect 参数是为了支持更新时的空保护，有些字段是不想被更新置空的</span>
+        keys <span style=color:#f92672>=</span> self<span style=color:#f92672>.</span>data<span style=color:#f92672>.</span>keys() <span style=color:#f92672>&amp;</span> other<span style=color:#f92672>.</span>data<span style=color:#f92672>.</span>keys()
+        fields <span style=color:#f92672>=</span> {
+            k: self<span style=color:#f92672>.</span>data[k] <span style=color:#66d9ef>for</span> k <span style=color:#f92672>in</span> keys <span style=color:#66d9ef>if</span> <span style=color:#f92672>not</span> compare(self<span style=color:#f92672>.</span>data[k], other<span style=color:#f92672>.</span>data[k])
+        }
+        <span style=color:#75715e># protect values, prevent set empty</span>
+        <span style=color:#66d9ef>if</span> write_protect:
+            <span style=color:#66d9ef>for</span> k <span style=color:#f92672>in</span> keys:
+                <span style=color:#66d9ef>if</span> <span style=color:#f92672>not</span> self<span style=color:#f92672>.</span>data[k] <span style=color:#f92672>and</span> k <span style=color:#f92672>in</span> write_protect:
+                    fields<span style=color:#f92672>.</span>pop(k, None)
+        <span style=color:#66d9ef>return</span> fields
+
+    <span style=color:#66d9ef>def</span> <span style=color:#a6e22e>keygen</span>(self, other<span style=color:#f92672>=</span>None):
+        <span style=color:#e6db74>&#34;&#34;&#34;
+</span><span style=color:#e6db74>        :param other:
+</span><span style=color:#e6db74>        :type other:
+</span><span style=color:#e6db74>
+</span><span style=color:#e6db74>        &#34;&#34;&#34;</span>
+        <span style=color:#75715e># unique keys between self and other are identical</span>
+        <span style=color:#75715e># pk must be getted from other</span>
+        <span style=color:#66d9ef>if</span> <span style=color:#f92672>not</span> other:
+            other <span style=color:#f92672>=</span> self
+
+        <span style=color:#66d9ef>if</span> other<span style=color:#f92672>.</span>pk <span style=color:#f92672>and</span> other<span style=color:#f92672>.</span>data<span style=color:#f92672>.</span>get(other<span style=color:#f92672>.</span>pk):
+            key <span style=color:#f92672>=</span> {other<span style=color:#f92672>.</span>pk: other<span style=color:#f92672>.</span>data<span style=color:#f92672>.</span>get(other<span style=color:#f92672>.</span>pk)}
+        <span style=color:#66d9ef>else</span>:
+            key <span style=color:#f92672>=</span> {k: other<span style=color:#f92672>.</span>data[k] <span style=color:#66d9ef>for</span> k <span style=color:#f92672>in</span> other<span style=color:#f92672>.</span>uniq_keys}
+        <span style=color:#66d9ef>return</span> key
+	
+    <span style=color:#75715e># 这是辅助方法，为了能自动序列化和反序列化 JSON 格式的字段数据</span>
+    <span style=color:#66d9ef>def</span> <span style=color:#a6e22e>datagen</span>(self, data, json_keys<span style=color:#f92672>=</span>None, encode<span style=color:#f92672>=</span>False):
+        <span style=color:#e6db74>&#34;&#34;&#34;
+</span><span style=color:#e6db74>        :param data:
+</span><span style=color:#e6db74>        :param json_keys: fields that values are JSON in data
+</span><span style=color:#e6db74>        :param encode: use `json.dumps` to process data if True else `json.loads`
+</span><span style=color:#e6db74>
+</span><span style=color:#e6db74>        &#34;&#34;&#34;</span>
+        <span style=color:#66d9ef>if</span> <span style=color:#f92672>not</span> json_keys:
+            <span style=color:#66d9ef>return</span> data
+
+        ret <span style=color:#f92672>=</span> copy<span style=color:#f92672>.</span>deepcopy(data)
+        <span style=color:#66d9ef>for</span> k <span style=color:#f92672>in</span> json_keys:
+            <span style=color:#66d9ef>if</span> is_json(data<span style=color:#f92672>.</span>get(k), encode):
+                <span style=color:#66d9ef>if</span> encode:
+                    ret[k] <span style=color:#f92672>=</span> json<span style=color:#f92672>.</span>dumps(data[k], ensure_ascii<span style=color:#f92672>=</span>False)
+                <span style=color:#66d9ef>else</span>:
+                    ret[k] <span style=color:#f92672>=</span> json<span style=color:#f92672>.</span>loads(data[k])
+        <span style=color:#66d9ef>return</span> ret
+
+    <span style=color:#75715e># 这是数据类子类必须要实现的方法，对应生成增、删、改的更新数据</span>
+    <span style=color:#66d9ef>def</span> <span style=color:#a6e22e>post_insert</span>(self, <span style=color:#f92672>*</span>args, <span style=color:#f92672>**</span>kwargs):
+        <span style=color:#66d9ef>raise</span> <span style=color:#a6e22e>NotImplementedError</span>
+
+    <span style=color:#66d9ef>def</span> <span style=color:#a6e22e>post_update</span>(self, other, write_protect<span style=color:#f92672>=</span>None, exclude<span style=color:#f92672>=</span>None, <span style=color:#f92672>*</span>args, <span style=color:#f92672>**</span>kwargs):
+        <span style=color:#e6db74>&#34;&#34;&#34;
+</span><span style=color:#e6db74>        :param other: Node build of data fetched from mysql
+</span><span style=color:#e6db74>        :param exclude: fields exclued during post optimizing
+</span><span style=color:#e6db74>        :param write_protect: fields need write-protecting, forbid to set empty
+</span><span style=color:#e6db74>
+</span><span style=color:#e6db74>        &#34;&#34;&#34;</span>
+        <span style=color:#66d9ef>raise</span> <span style=color:#a6e22e>NotImplementedError</span>
+
+    <span style=color:#66d9ef>def</span> <span style=color:#a6e22e>post_delete</span>(self, <span style=color:#f92672>*</span>args, <span style=color:#f92672>**</span>kwargs):
+        <span style=color:#66d9ef>raise</span> <span style=color:#a6e22e>NotImplementedError</span>
+
+</code></pre></div><p>为 mysql proxy API 接口定义数据类</p><div class=highlight><pre style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code class=language-python data-lang=python><span style=color:#66d9ef>class</span> <span style=color:#a6e22e>MyApiDataNode</span>(BaseDataNode):
+    <span style=color:#e6db74>&#34;&#34;&#34;
+</span><span style=color:#e6db74>    :param data:
+</span><span style=color:#e6db74>    :param uniq_keys:
+</span><span style=color:#e6db74>    :param primary_key: [optional]
+</span><span style=color:#e6db74>    :param split_param: [optional]
+</span><span style=color:#e6db74>    :param json_keys: [optional] auto loads/dumps json values
+</span><span style=color:#e6db74>
+</span><span style=color:#e6db74>    &#34;&#34;&#34;</span>
+
+    <span style=color:#66d9ef>def</span> __init__(
+        self,
+        data,
+        uniq_keys,
+        primary_key<span style=color:#f92672>=</span>None,
+        json_keys<span style=color:#f92672>=</span>None,
+        split_param<span style=color:#f92672>=</span>None,
+        <span style=color:#f92672>**</span>kwargs
+    ):
+        self<span style=color:#f92672>.</span>json_keys <span style=color:#f92672>=</span> json_keys
+        self<span style=color:#f92672>.</span>split_param <span style=color:#f92672>=</span> split_param
+        super(MyApiDataNode, self)<span style=color:#f92672>.</span>__init__(
+            self<span style=color:#f92672>.</span>datagen(data, self<span style=color:#f92672>.</span>json_keys), uniq_keys, primary_key, <span style=color:#f92672>**</span>kwargs
+        )
+
+    <span style=color:#66d9ef>def</span> <span style=color:#a6e22e>post_insert</span>(self, <span style=color:#f92672>*</span>args, <span style=color:#f92672>**</span>kwargs):
+        <span style=color:#66d9ef>return</span> {
+            <span style=color:#e6db74>&#34;body&#34;</span>: self<span style=color:#f92672>.</span>datagen(self<span style=color:#f92672>.</span>data, self<span style=color:#f92672>.</span>json_keys, encode<span style=color:#f92672>=</span>True),
+            <span style=color:#e6db74>&#34;split_param&#34;</span>: self<span style=color:#f92672>.</span>data<span style=color:#f92672>.</span>get(self<span style=color:#f92672>.</span>split_param) <span style=color:#f92672>or</span> <span style=color:#e6db74>&#34;&#34;</span>,
+        }
+
+    <span style=color:#66d9ef>def</span> <span style=color:#a6e22e>post_update</span>(self, other, write_protect<span style=color:#f92672>=</span>None, exclude<span style=color:#f92672>=</span>None, <span style=color:#f92672>*</span>args, <span style=color:#f92672>**</span>kwargs):
+        <span style=color:#e6db74>&#34;&#34;&#34;
+</span><span style=color:#e6db74>        :param other        : Node build of data fetched from mysql
+</span><span style=color:#e6db74>        :param exclude      : fields exclued during post optimizing
+</span><span style=color:#e6db74>        :param write_protect: fields need write-protecting, forbid to set empty
+</span><span style=color:#e6db74>
+</span><span style=color:#e6db74>        &#34;&#34;&#34;</span>
+        key <span style=color:#f92672>=</span> self<span style=color:#f92672>.</span>keygen(other)
+
+        <span style=color:#75715e># fields not to update</span>
+        <span style=color:#66d9ef>if</span> exclude:
+            self<span style=color:#f92672>.</span>_remove(exclude)
+
+        body <span style=color:#f92672>=</span> self<span style=color:#f92672>.</span>_diff(other, write_protect)
+        <span style=color:#66d9ef>if</span> <span style=color:#f92672>not</span> body:
+            log<span style=color:#f92672>.</span>debug(<span style=color:#e6db74>&#34;{}: update nothing due to no different fields&#34;</span><span style=color:#f92672>.</span>format(self))
+            <span style=color:#66d9ef>return</span> dict()
+
+        <span style=color:#66d9ef>return</span> {
+            <span style=color:#e6db74>&#34;key&#34;</span>: key,
+            <span style=color:#e6db74>&#34;body&#34;</span>: self<span style=color:#f92672>.</span>datagen(body, json_keys<span style=color:#f92672>=</span>self<span style=color:#f92672>.</span>json_keys, encode<span style=color:#f92672>=</span>True),
+            <span style=color:#e6db74>&#34;split_param&#34;</span>: self<span style=color:#f92672>.</span>data<span style=color:#f92672>.</span>get(self<span style=color:#f92672>.</span>split_param) <span style=color:#f92672>or</span> <span style=color:#e6db74>&#34;&#34;</span>,
+        }
+
+    <span style=color:#66d9ef>def</span> <span style=color:#a6e22e>post_delete</span>(self, del_flag<span style=color:#f92672>=</span><span style=color:#ae81ff>0</span>, <span style=color:#f92672>*</span>args, <span style=color:#f92672>**</span>kwargs):
+        <span style=color:#e6db74>&#34;&#34;&#34;
+</span><span style=color:#e6db74>        :param del_flag: 0: not delete, 1: logical delete, 2: physical delete
+</span><span style=color:#e6db74>
+</span><span style=color:#e6db74>        &#34;&#34;&#34;</span>
+        <span style=color:#75715e># it is from mysql when executing delete</span>
+        key <span style=color:#f92672>=</span> self<span style=color:#f92672>.</span>keygen()
+
+        <span style=color:#66d9ef>if</span> del_flag <span style=color:#f92672>==</span> <span style=color:#ae81ff>1</span>:
+            <span style=color:#75715e># 逻辑删除</span>
+            <span style=color:#75715e># &lt;u_tags&gt; write-protect</span>
+            tag <span style=color:#f92672>=</span> int(self<span style=color:#f92672>.</span>data<span style=color:#f92672>.</span>get(<span style=color:#e6db74>&#34;u_tags&#34;</span>) <span style=color:#f92672>or</span> <span style=color:#ae81ff>0</span>)
+            <span style=color:#66d9ef>if</span> tag <span style=color:#f92672>==</span> <span style=color:#ae81ff>1</span> <span style=color:#f92672>or</span> tag <span style=color:#f92672>==</span> <span style=color:#ae81ff>2</span>:
+                log<span style=color:#f92672>.</span>debug(<span style=color:#e6db74>&#34;delete nothing due to u_tags is protected or hidden&#34;</span>)
+                <span style=color:#66d9ef>return</span> dict()
+            <span style=color:#66d9ef>else</span>:
+                tag <span style=color:#f92672>=</span> <span style=color:#ae81ff>1</span>
+            <span style=color:#66d9ef>return</span> {
+                <span style=color:#e6db74>&#34;key&#34;</span>: key,
+                <span style=color:#e6db74>&#34;body&#34;</span>: {<span style=color:#e6db74>&#34;u_tags&#34;</span>: tag},
+                <span style=color:#e6db74>&#34;split_param&#34;</span>: self<span style=color:#f92672>.</span>data<span style=color:#f92672>.</span>get(self<span style=color:#f92672>.</span>split_param) <span style=color:#f92672>or</span> <span style=color:#e6db74>&#34;&#34;</span>,
+            }
+
+        <span style=color:#66d9ef>elif</span> del_flag <span style=color:#f92672>==</span> <span style=color:#ae81ff>2</span>:
+            <span style=color:#75715e># 物理删除</span>
+            <span style=color:#66d9ef>return</span> {<span style=color:#e6db74>&#34;key&#34;</span>: key, <span style=color:#e6db74>&#34;split_param&#34;</span>: self<span style=color:#f92672>.</span>data<span style=color:#f92672>.</span>get(self<span style=color:#f92672>.</span>split_param) <span style=color:#f92672>or</span> <span style=color:#e6db74>&#34;&#34;</span>}
+
+        <span style=color:#66d9ef>else</span>:
+            <span style=color:#66d9ef>return</span> dict()
+</code></pre></div><p>更新优化主模块</p><div class=highlight><pre style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code class=language-python data-lang=python><span style=color:#66d9ef>class</span> <span style=color:#a6e22e>BoostPost</span>(object):
+    <span style=color:#e6db74>&#34;&#34;&#34;Generate post data of business proxy API, It&#39;s convenient and efficient,
+</span><span style=color:#e6db74>    can save you from a mess
+</span><span style=color:#e6db74>	&#34;&#34;&#34;</span>
+    <span style=color:#66d9ef>def</span> __init__(self, table_name, uniq_keys, datanode, primary_key<span style=color:#f92672>=</span>None, <span style=color:#f92672>**</span>kwargs):
+        self<span style=color:#f92672>.</span>table_name <span style=color:#f92672>=</span> table_name
+        self<span style=color:#f92672>.</span>uniq_keys <span style=color:#f92672>=</span> uniq_keys  <span style=color:#75715e># 表的唯一键字段</span>
+        self<span style=color:#f92672>.</span>datanode <span style=color:#f92672>=</span> datanode  <span style=color:#75715e># 指定数据类</span>
+        self<span style=color:#f92672>.</span>primary_key <span style=color:#f92672>=</span> primary_key  <span style=color:#75715e># 表的主键，可以在更新和删除时代替 uniq_keys 生成的 key</span>
+        self<span style=color:#f92672>.</span>datanode_kwargs <span style=color:#f92672>=</span> kwargs
+        self<span style=color:#f92672>.</span>nodes1 <span style=color:#f92672>=</span> None
+        self<span style=color:#f92672>.</span>nodes2 <span style=color:#f92672>=</span> None
+        self<span style=color:#f92672>.</span>insert <span style=color:#f92672>=</span> []
+        self<span style=color:#f92672>.</span>update <span style=color:#f92672>=</span> []
+        self<span style=color:#f92672>.</span>delete <span style=color:#f92672>=</span> []
+        self<span style=color:#f92672>.</span>status <span style=color:#f92672>=</span> {<span style=color:#e6db74>&#34;insert&#34;</span>: False, <span style=color:#e6db74>&#34;update&#34;</span>: False, <span style=color:#e6db74>&#34;delete&#34;</span>: False}
+        self<span style=color:#f92672>.</span>__post <span style=color:#f92672>=</span> defaultdict(dict)
+	
+    <span style=color:#a6e22e>@property</span>
+    <span style=color:#66d9ef>def</span> <span style=color:#a6e22e>post</span>(self):
+        <span style=color:#66d9ef>return</span> self<span style=color:#f92672>.</span>__post <span style=color:#66d9ef>if</span> self<span style=color:#f92672>.</span>__post<span style=color:#f92672>.</span>get(self<span style=color:#f92672>.</span>table_name) <span style=color:#66d9ef>else</span> {}
+	
+    <span style=color:#75715e># 该方法将数据项转换成数据类实例</span>
+    <span style=color:#66d9ef>def</span> <span style=color:#a6e22e>spawn</span>(self, records_new, records_old):
+        <span style=color:#e6db74>&#34;&#34;&#34;spwan instances of datanode from records
+</span><span style=color:#e6db74>
+</span><span style=color:#e6db74>        :param records_new         : old records read from mysql
+</span><span style=color:#e6db74>        :type  records_new         : [list]
+</span><span style=color:#e6db74>        :param records_old         : new records to update
+</span><span style=color:#e6db74>        :type  records_old         : [list]
+</span><span style=color:#e6db74>
+</span><span style=color:#e6db74>        &#34;&#34;&#34;</span>
+        <span style=color:#66d9ef>if</span> isinstance(self<span style=color:#f92672>.</span>nodes1, set) <span style=color:#f92672>and</span> isinstance(self<span style=color:#f92672>.</span>nodes2, set):
+            <span style=color:#66d9ef>raise</span> BoostPostError(<span style=color:#e6db74>&#34;already spawned, can not spawn twice&#34;</span>)
+
+        self<span style=color:#f92672>.</span>nodes1 <span style=color:#f92672>=</span> {
+            self<span style=color:#f92672>.</span>datanode(
+                _, self<span style=color:#f92672>.</span>uniq_keys, primary_key<span style=color:#f92672>=</span>self<span style=color:#f92672>.</span>primary_key, <span style=color:#f92672>**</span>self<span style=color:#f92672>.</span>datanode_kwargs
+            )
+            <span style=color:#66d9ef>for</span> _ <span style=color:#f92672>in</span> records_new
+        }
+        self<span style=color:#f92672>.</span>nodes2 <span style=color:#f92672>=</span> {
+            self<span style=color:#f92672>.</span>datanode(
+                _, self<span style=color:#f92672>.</span>uniq_keys, primary_key<span style=color:#f92672>=</span>self<span style=color:#f92672>.</span>primary_key, <span style=color:#f92672>**</span>self<span style=color:#f92672>.</span>datanode_kwargs
+            )
+            <span style=color:#66d9ef>for</span> _ <span style=color:#f92672>in</span> records_old
+        }
+	
+    <span style=color:#75715e># 这里对应数据类的 `post_xx` 方法</span>
+    <span style=color:#66d9ef>def</span> <span style=color:#a6e22e>post_insert</span>(self, <span style=color:#f92672>*</span>args, <span style=color:#f92672>**</span>kwargs):
+        <span style=color:#66d9ef>if</span> self<span style=color:#f92672>.</span>status[<span style=color:#e6db74>&#34;insert&#34;</span>]:
+            <span style=color:#66d9ef>raise</span> BoostPostError(<span style=color:#e6db74>&#34;already executed `post_insert`&#34;</span>)
+
+        self<span style=color:#f92672>.</span>status[<span style=color:#e6db74>&#34;insert&#34;</span>] <span style=color:#f92672>=</span> True
+        self<span style=color:#f92672>.</span>insert<span style=color:#f92672>.</span>extend(
+            [node<span style=color:#f92672>.</span>post_insert(<span style=color:#f92672>*</span>args, <span style=color:#f92672>**</span>kwargs) <span style=color:#66d9ef>for</span> node <span style=color:#f92672>in</span> (self<span style=color:#f92672>.</span>nodes1 <span style=color:#f92672>-</span> self<span style=color:#f92672>.</span>nodes2)]
+        )
+        self<span style=color:#f92672>.</span>insert <span style=color:#f92672>=</span> [_ <span style=color:#66d9ef>for</span> _ <span style=color:#f92672>in</span> self<span style=color:#f92672>.</span>insert <span style=color:#66d9ef>if</span> _]
+        <span style=color:#66d9ef>if</span> len(self<span style=color:#f92672>.</span>insert) <span style=color:#f92672>&gt;</span> <span style=color:#ae81ff>0</span>:
+            self<span style=color:#f92672>.</span>__post[self<span style=color:#f92672>.</span>table_name]<span style=color:#f92672>.</span>setdefault(<span style=color:#e6db74>&#34;insert&#34;</span>, [])<span style=color:#f92672>.</span>extend(self<span style=color:#f92672>.</span>insert)
+
+    <span style=color:#66d9ef>def</span> <span style=color:#a6e22e>post_update</span>(self, write_protect<span style=color:#f92672>=</span>None, exclude<span style=color:#f92672>=</span>None, <span style=color:#f92672>*</span>args, <span style=color:#f92672>**</span>kwargs):
+        <span style=color:#e6db74>&#34;&#34;&#34;
+</span><span style=color:#e6db74>        :param write_protect: fields need write-protecting, forbid to set empty
+</span><span style=color:#e6db74>        :param exclude: fields exclued during post optimizing
+</span><span style=color:#e6db74>
+</span><span style=color:#e6db74>        &#34;&#34;&#34;</span>
+        <span style=color:#66d9ef>if</span> self<span style=color:#f92672>.</span>status[<span style=color:#e6db74>&#34;update&#34;</span>]:
+            <span style=color:#66d9ef>raise</span> BoostPostError(<span style=color:#e6db74>&#34;already executed `post_update`&#34;</span>)
+
+        self<span style=color:#f92672>.</span>status[<span style=color:#e6db74>&#34;update&#34;</span>] <span style=color:#f92672>=</span> True
+        <span style=color:#75715e># select nodes to update</span>
+        mine <span style=color:#f92672>=</span> [node <span style=color:#66d9ef>for</span> node <span style=color:#f92672>in</span> self<span style=color:#f92672>.</span>nodes1 <span style=color:#66d9ef>if</span> node <span style=color:#f92672>in</span> self<span style=color:#f92672>.</span>nodes2]
+        others <span style=color:#f92672>=</span> [node <span style=color:#66d9ef>for</span> node <span style=color:#f92672>in</span> self<span style=color:#f92672>.</span>nodes2 <span style=color:#66d9ef>if</span> node <span style=color:#f92672>in</span> self<span style=color:#f92672>.</span>nodes1]
+        <span style=color:#66d9ef>if</span> len(mine) <span style=color:#f92672>==</span> <span style=color:#ae81ff>0</span> <span style=color:#f92672>and</span> len(others) <span style=color:#f92672>==</span> <span style=color:#ae81ff>0</span>:
+            self<span style=color:#f92672>.</span>update <span style=color:#f92672>=</span> []
+        <span style=color:#66d9ef>else</span>:
+            <span style=color:#75715e># sort nodes in order to keep one-to-one correspondence</span>
+            self<span style=color:#f92672>.</span>update <span style=color:#f92672>=</span> [
+                x<span style=color:#f92672>.</span>post_update(
+                    y, write_protect<span style=color:#f92672>=</span>write_protect, exclude<span style=color:#f92672>=</span>exclude, <span style=color:#f92672>*</span>args, <span style=color:#f92672>**</span>kwargs
+                )
+                <span style=color:#66d9ef>for</span> x, y <span style=color:#f92672>in</span> zip(
+                    sorted(mine, key<span style=color:#f92672>=</span><span style=color:#66d9ef>lambda</span> x: x<span style=color:#f92672>.</span>unique),
+                    sorted(others, key<span style=color:#f92672>=</span><span style=color:#66d9ef>lambda</span> x: x<span style=color:#f92672>.</span>unique),
+                )
+            ]
+        self<span style=color:#f92672>.</span>update <span style=color:#f92672>=</span> [_ <span style=color:#66d9ef>for</span> _ <span style=color:#f92672>in</span> self<span style=color:#f92672>.</span>update <span style=color:#66d9ef>if</span> _]
+        <span style=color:#66d9ef>if</span> len(self<span style=color:#f92672>.</span>update) <span style=color:#f92672>&gt;</span> <span style=color:#ae81ff>0</span>:
+            self<span style=color:#f92672>.</span>__post[self<span style=color:#f92672>.</span>table_name]<span style=color:#f92672>.</span>setdefault(<span style=color:#e6db74>&#34;update&#34;</span>, [])<span style=color:#f92672>.</span>extend(self<span style=color:#f92672>.</span>update)
+
+    <span style=color:#66d9ef>def</span> <span style=color:#a6e22e>post_delete</span>(self, del_flag<span style=color:#f92672>=</span><span style=color:#ae81ff>2</span>, <span style=color:#f92672>*</span>args, <span style=color:#f92672>**</span>kwargs):
+        <span style=color:#e6db74>&#34;&#34;&#34;
+</span><span style=color:#e6db74>        :param del_flag: 0: not delete, 1: logical delete, 2: physical delete
+</span><span style=color:#e6db74>
+</span><span style=color:#e6db74>        &#34;&#34;&#34;</span>
+        <span style=color:#66d9ef>if</span> self<span style=color:#f92672>.</span>status[<span style=color:#e6db74>&#34;delete&#34;</span>]:
+            <span style=color:#66d9ef>raise</span> BoostPostError(<span style=color:#e6db74>&#34;already executed `post_delete`&#34;</span>)
+
+        self<span style=color:#f92672>.</span>status[<span style=color:#e6db74>&#34;delete&#34;</span>] <span style=color:#f92672>=</span> True
+        <span style=color:#66d9ef>if</span> del_flag <span style=color:#f92672>==</span> <span style=color:#ae81ff>0</span>:
+            <span style=color:#66d9ef>return</span>
+
+        self<span style=color:#f92672>.</span>delete<span style=color:#f92672>.</span>extend(
+            [
+                node<span style=color:#f92672>.</span>post_delete(del_flag<span style=color:#f92672>=</span>del_flag, <span style=color:#f92672>*</span>args, <span style=color:#f92672>**</span>kwargs)
+                <span style=color:#66d9ef>for</span> node <span style=color:#f92672>in</span> (self<span style=color:#f92672>.</span>nodes2 <span style=color:#f92672>-</span> self<span style=color:#f92672>.</span>nodes1)
+            ]
+        )
+        self<span style=color:#f92672>.</span>delete <span style=color:#f92672>=</span> [_ <span style=color:#66d9ef>for</span> _ <span style=color:#f92672>in</span> self<span style=color:#f92672>.</span>delete <span style=color:#66d9ef>if</span> _]
+        <span style=color:#66d9ef>if</span> <span style=color:#f92672>not</span> self<span style=color:#f92672>.</span>delete:
+            <span style=color:#66d9ef>return</span>
+
+        <span style=color:#66d9ef>if</span> del_flag <span style=color:#f92672>==</span> <span style=color:#ae81ff>1</span>:
+            self<span style=color:#f92672>.</span>__post[self<span style=color:#f92672>.</span>table_name]<span style=color:#f92672>.</span>setdefault(<span style=color:#e6db74>&#34;update&#34;</span>, [])<span style=color:#f92672>.</span>extend(self<span style=color:#f92672>.</span>delete)
+            self<span style=color:#f92672>.</span>delete <span style=color:#f92672>*=</span> <span style=color:#ae81ff>0</span>
+        <span style=color:#66d9ef>elif</span> del_flag <span style=color:#f92672>==</span> <span style=color:#ae81ff>2</span>:
+            self<span style=color:#f92672>.</span>__post[self<span style=color:#f92672>.</span>table_name]<span style=color:#f92672>.</span>setdefault(<span style=color:#e6db74>&#34;delete&#34;</span>, [])<span style=color:#f92672>.</span>extend(self<span style=color:#f92672>.</span>delete)
+        <span style=color:#66d9ef>else</span>:
+            <span style=color:#66d9ef>raise</span> BoostPostError(<span style=color:#e6db74>&#34;unrecongnized del_flag: {}&#34;</span><span style=color:#f92672>.</span>format(del_flag))
+</code></pre></div><h4 id=使用示例>使用示例</h4><div class=highlight><pre style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code class=language-python data-lang=python><span style=color:#f92672>&gt;&gt;&gt;</span> <span style=color:#f92672>from</span> boostpost.nodes <span style=color:#f92672>import</span> MyApiDataNode
+<span style=color:#f92672>&gt;&gt;&gt;</span> <span style=color:#f92672>from</span> boostpost <span style=color:#f92672>import</span> BoostPost
+<span style=color:#f92672>&gt;&gt;&gt;</span> boost <span style=color:#f92672>=</span> BoostPost(
+<span style=color:#f92672>&gt;&gt;&gt;</span>     <span style=color:#e6db74>&#39;t_people&#39;</span>,
+<span style=color:#f92672>&gt;&gt;&gt;</span>     uniq_keys<span style=color:#f92672>=</span>[<span style=color:#e6db74>&#39;first_name&#39;</span>, <span style=color:#e6db74>&#39;last_name&#39;</span>],
+<span style=color:#f92672>&gt;&gt;&gt;</span>     datanode<span style=color:#f92672>=</span>MyApiDataNode,
+<span style=color:#f92672>&gt;&gt;&gt;</span>     split_param<span style=color:#f92672>=</span><span style=color:#e6db74>&#39;ip_address&#39;</span>
+<span style=color:#f92672>&gt;&gt;&gt;</span> )
+<span style=color:#f92672>&gt;&gt;&gt;</span> boost<span style=color:#f92672>.</span>spawn(new_data, old_data)
+<span style=color:#f92672>&gt;&gt;&gt;</span> boost<span style=color:#f92672>.</span>post_insert()
+<span style=color:#f92672>&gt;&gt;&gt;</span> boost<span style=color:#f92672>.</span>post_update(exclude<span style=color:#f92672>=</span>[<span style=color:#e6db74>&#39;create_time&#39;</span>])
+<span style=color:#f92672>&gt;&gt;&gt;</span> boost<span style=color:#f92672>.</span>post_delete(del_flag<span style=color:#f92672>=</span><span style=color:#ae81ff>1</span>)
+</code></pre></div><h4 id=扩展示例>扩展示例</h4><p>更新来源优先级</p><div class=highlight><pre style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code class=language-python data-lang=python><span style=color:#66d9ef>class</span> <span style=color:#a6e22e>Node</span>(MyApiDataNode):
+    <span style=color:#a6e22e>@property</span>
+    <span style=color:#66d9ef>def</span> <span style=color:#a6e22e>priority</span>(self):
+        <span style=color:#66d9ef>return</span> <span style=color:#ae81ff>5</span> <span style=color:#66d9ef>if</span> self<span style=color:#f92672>.</span>data[<span style=color:#e6db74>&#34;source&#34;</span>] <span style=color:#f92672>==</span> <span style=color:#e6db74>&#34;001&#34;</span> <span style=color:#66d9ef>else</span> <span style=color:#ae81ff>1</span>
+
+    <span style=color:#66d9ef>def</span> <span style=color:#a6e22e>post_update</span>(self, other, write_protect<span style=color:#f92672>=</span>None, exclude<span style=color:#f92672>=</span>None, <span style=color:#f92672>*</span>args, <span style=color:#f92672>**</span>kwargs):
+        <span style=color:#66d9ef>if</span> self<span style=color:#f92672>.</span>priority <span style=color:#f92672>&lt;</span> other<span style=color:#f92672>.</span>priority:
+            <span style=color:#66d9ef>return</span>
+        <span style=color:#66d9ef>return</span> super(Node, self)<span style=color:#f92672>.</span>post_update(other, write_protect<span style=color:#f92672>=</span>write_protect, exclude<span style=color:#f92672>=</span>exclude, <span style=color:#f92672>*</span>args, <span style=color:#f92672>**</span>kwargs)
+</code></pre></div><p>通过 <code>is_history</code> 逻辑删除</p><div class=highlight><pre style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code class=language-python data-lang=python><span style=color:#66d9ef>class</span> <span style=color:#a6e22e>Node</span>(MyApiDataNode):
+    <span style=color:#66d9ef>def</span> <span style=color:#a6e22e>post_delete</span>(self, other, del_flag<span style=color:#f92672>=</span><span style=color:#ae81ff>1</span>, <span style=color:#f92672>*</span>args, <span style=color:#f92672>**</span>kwargs):
+        flag <span style=color:#f92672>=</span> other<span style=color:#f92672>.</span>data[<span style=color:#e6db74>&#34;is_history&#34;</span>]
+        <span style=color:#66d9ef>if</span> flag <span style=color:#f92672>==</span> <span style=color:#ae81ff>1</span>:
+            <span style=color:#66d9ef>return</span>
+        <span style=color:#66d9ef>return</span> {
+            <span style=color:#e6db74>&#34;body&#34;</span>: {<span style=color:#e6db74>&#34;is_history&#34;</span>: <span style=color:#ae81ff>1</span>},
+            <span style=color:#e6db74>&#34;key&#34;</span>: {<span style=color:#f92672>...</span>}
+        }
+</code></pre></div><h2 id=结语>结语</h2><p>项目代码质量是在持续不断的重构中提高的，需要多阅读优秀源码，借鉴其中好的设计，重构中很重要的一点是需要考虑“高内聚、低耦合”。</p><p>再次推荐：</p><ul><li><a href=https://book.douban.com/subject/4262627/>《重构 - 改善既有代码的设计》</a></li><li><a href=https://book.douban.com/subject/10797189/>《编写可读代码的艺术》</a></li></ul></section><div class=post-tags><nav class="nav tags"><ul class=tags><li><a href=/tags/%E6%8A%80%E6%9C%AF>技术</a></li></ul></nav></div></article></main><footer><hr><a class=soc href=https://github.com/zhiweio title=GitHub><i data-feather=github></i></a>|⚡️
+2021 © Wang Zhiwei | <a href=https://github.com/athul/archie>Archie Theme</a> | Built with <a href=https://gohugo.io>Hugo</a></footer><script>feather.replace()</script></div></body></html>
